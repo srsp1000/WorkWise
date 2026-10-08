@@ -1,0 +1,2 @@
+thermofeel>=2.2,<3
+pytest>=8,<10

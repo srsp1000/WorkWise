@@ -1,0 +1,22 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.venv/
+env/
+venv/
+
+# Testing & Caches
+.pytest_cache/
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+
+# Generated outputs
+phase1_output.json
+
