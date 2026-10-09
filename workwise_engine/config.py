@@ -9,19 +9,32 @@ class TaskConfig:
     default_duration_h: int
     outdoor: bool = True
     continuous: bool = True
+    dust_generating: bool = False
+    depends_on: tuple[str, ...] = ()
+    crew_required: int = 4
 
 
 # Prototype task catalog. These are workload buckets, not legal classifications.
 TASKS = {
-    "concrete": TaskConfig("concrete", "Concrete pour", "heavy", 3, True, True),
-    "rebar": TaskConfig("rebar", "Rebar work", "heavy", 4, True, True),
-    "brickwork": TaskConfig("brickwork", "Brickwork", "moderate", 3, True, True),
-    "painting": TaskConfig("painting", "Painting", "moderate", 2, True, True),
-    "material_prep": TaskConfig("material_prep", "Material preparation", "light", 2, False, False),
-    "excavation": TaskConfig("excavation", "Excavation", "heavy", 3, True, True),
-    "crane_lift": TaskConfig("crane_lift", "Crane lift", "heavy", 2, True, True),
-    "electrical": TaskConfig("electrical", "Electrical work", "moderate", 2, True, True),
-    "work_at_height": TaskConfig("work_at_height", "Work at height", "moderate", 2, True, True),
+    "concrete": TaskConfig("concrete", "Concrete pour", "heavy", 3, True, True, True, ("rebar",), 8),
+    "rebar": TaskConfig("rebar", "Rebar work", "heavy", 4, True, True, False, ("excavation",), 6),
+    "brickwork": TaskConfig("brickwork", "Brickwork", "moderate", 3, True, True, True, ("concrete",), 5),
+    "painting": TaskConfig("painting", "Painting", "moderate", 2, True, True, False, ("brickwork",), 3),
+    "material_prep": TaskConfig("material_prep", "Material preparation", "light", 2, False, False, False, (), 3),
+    "excavation": TaskConfig("excavation", "Excavation", "heavy", 3, True, True, True, (), 6),
+    "crane_lift": TaskConfig("crane_lift", "Crane lift", "heavy", 2, True, True, False, (), 4),
+    "electrical": TaskConfig("electrical", "Electrical work", "moderate", 2, True, True, False, (), 3),
+    "work_at_height": TaskConfig("work_at_height", "Work at height", "moderate", 2, True, True, False, (), 4),
+}
+
+# Graded Response Action Plan (GRAP) for Delhi NCR.
+# Stages III and IV prohibit dust-generating construction activities.
+GRAP_STAGES = {
+    0: "Normal (No Restrictions)",
+    1: "Stage I — Poor (Dust Control Enforced)",
+    2: "Stage II — Very Poor (Increased Sweeping)",
+    3: "Stage III — Severe (Construction & Demolition Banned)",
+    4: "Stage IV — Severe+ (Full Vehicle & Site Lockdown)",
 }
 
 # Provisional screening values for the prototype.

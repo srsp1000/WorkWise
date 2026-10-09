@@ -69,7 +69,7 @@ def test_scenario_shift_window():
         "shift_start_hour": 8,
         "shift_end_hour": 14,
         "tasks": [
-            {"id": "concrete", "duration_h": 3},
+            {"id": "material_prep", "duration_h": 2},
         ],
     }
     response = client.post("/api/scenarios/normal/plan", json=payload)
@@ -78,4 +78,33 @@ def test_scenario_shift_window():
     sched = data["schedule"][0]
     assert sched["start"] >= "08:00"
     assert sched["end"] <= "14:00"
+
+
+def test_api_plan_with_dependencies_and_crew_capacity():
+    payload = {
+        "shift_start_hour": 6,
+        "shift_end_hour": 18,
+        "total_crew_size": 18,
+        "max_concurrent_tasks": 2,
+        "tasks": [
+            {"id": "excavation", "duration_h": 2, "depends_on": []},
+            {"id": "rebar", "duration_h": 2, "depends_on": ["excavation"]},
+            {"id": "material_prep", "duration_h": 2, "depends_on": []},
+        ],
+    }
+    response = client.post("/api/scenarios/normal/plan", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    sched = {item["task_id"]: item for item in data["schedule"]}
+    
+    assert sched["excavation"]["status"] == "SCHEDULED"
+    assert sched["rebar"]["status"] == "SCHEDULED"
+    assert sched["material_prep"]["status"] == "SCHEDULED"
+    
+    # Rebar must start after Excavation ends
+    assert sched["rebar"]["start"] >= sched["excavation"]["end"]
+    # Verify diagnostic explanations
+    assert "why_scheduled" in sched["rebar"]
+    assert "following Excavation completion" in sched["rebar"]["why_scheduled"]
+
 

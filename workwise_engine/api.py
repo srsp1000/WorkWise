@@ -29,6 +29,8 @@ app.add_middleware(
 class TaskItem(BaseModel):
     id: str = Field(..., json_schema_extra={"example": "concrete"}, description="Task identifier from task catalog")
     duration_h: Optional[int] = Field(None, json_schema_extra={"example": 3}, description="Custom duration in hours")
+    depends_on: Optional[list[str]] = Field(None, description="Optional prerequisite task IDs")
+    crew_required: Optional[int] = Field(None, description="Optional worker count required")
 
 
 class PlanRequest(BaseModel):
@@ -39,6 +41,8 @@ class PlanRequest(BaseModel):
     grap_stage: int = Field(0, ge=0, le=4, description="GRAP pollution stage (0-4)")
     shift_start_hour: int = Field(6, ge=0, le=23, description="Shift start hour (0-23)")
     shift_end_hour: int = Field(18, ge=1, le=24, description="Shift end hour (1-24)")
+    total_crew_size: int = Field(18, ge=1, description="Total site crew capacity")
+    max_concurrent_tasks: int = Field(2, ge=1, description="Max concurrent task bound")
     tasks: list[TaskItem] = Field(..., description="List of tasks to schedule")
 
 
@@ -47,6 +51,8 @@ class ScenarioPlanRequest(BaseModel):
     grap_stage: Optional[int] = Field(None, ge=0, le=4, description="Override GRAP stage")
     shift_start_hour: int = Field(6, ge=0, le=23, description="Shift start hour (0-23)")
     shift_end_hour: int = Field(18, ge=1, le=24, description="Shift end hour (1-24)")
+    total_crew_size: int = Field(18, ge=1, description="Total site crew capacity")
+    max_concurrent_tasks: int = Field(2, ge=1, description="Max concurrent task bound")
     tasks: list[TaskItem] = Field(..., description="List of tasks to schedule")
 
 
@@ -71,6 +77,8 @@ def get_task_catalog():
                 "outdoor": v.outdoor,
                 "continuous": v.continuous,
                 "dust_generating": v.dust_generating,
+                "depends_on": list(v.depends_on),
+                "crew_required": v.crew_required,
             }
             for k, v in TASKS.items()
         },
@@ -104,8 +112,22 @@ def generate_live_plan(req: PlanRequest):
         grap_stage=req.grap_stage,
     )
 
-    task_dicts = [{"id": t.id, "duration_h": t.duration_h} for t in req.tasks]
-    plan = schedule_tasks(matrix, task_dicts, day_start=req.shift_start_hour * 60)
+    task_dicts = [
+        {
+            "id": t.id,
+            "duration_h": t.duration_h,
+            "depends_on": t.depends_on,
+            "crew_required": t.crew_required,
+        }
+        for t in req.tasks
+    ]
+    plan = schedule_tasks(
+        matrix,
+        task_dicts,
+        day_start=req.shift_start_hour * 60,
+        total_crew_size=req.total_crew_size,
+        max_concurrent_tasks=req.max_concurrent_tasks,
+    )
 
     return {
         "site": f"Lat {req.lat}, Lon {req.lon}",
@@ -113,6 +135,7 @@ def generate_live_plan(req: PlanRequest):
         "grap_stage": req.grap_stage,
         "grap_description": GRAP_STAGES.get(req.grap_stage, "Unknown"),
         "new_crew": req.new_crew,
+        "total_crew_size": req.total_crew_size,
         "matrix": matrix,
         "schedule": plan,
     }
@@ -154,14 +177,29 @@ def generate_scenario_plan(
         grap_stage=grap,
     )
 
-    task_dicts = [{"id": t.id, "duration_h": t.duration_h} for t in req.tasks]
-    plan = schedule_tasks(matrix, task_dicts, day_start=req.shift_start_hour * 60)
+    task_dicts = [
+        {
+            "id": t.id,
+            "duration_h": t.duration_h,
+            "depends_on": t.depends_on,
+            "crew_required": t.crew_required,
+        }
+        for t in req.tasks
+    ]
+    plan = schedule_tasks(
+        matrix,
+        task_dicts,
+        day_start=req.shift_start_hour * 60,
+        total_crew_size=req.total_crew_size,
+        max_concurrent_tasks=req.max_concurrent_tasks,
+    )
 
     return {
         "scenario_id": scenario_id,
         "grap_stage": grap,
         "grap_description": GRAP_STAGES.get(grap, "Unknown"),
         "new_crew": req.new_crew,
+        "total_crew_size": req.total_crew_size,
         "matrix": matrix,
         "schedule": plan,
     }
