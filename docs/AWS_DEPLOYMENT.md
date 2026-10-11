@@ -94,8 +94,11 @@ Building on Windows without Docker can fail due to symlinks, file permissions, o
 git clone https://github.com/srsp1000/WorkWise.git
 cd WorkWise
 
-# Build serverless artifacts inside container
-sam build --use-container
+# Ensure Python 3.12 is installed in CloudShell (Amazon Linux 2023)
+sudo dnf install -y python3.12 python3.12-pip
+
+# Build serverless artifacts natively (fast, no Docker container issues)
+sam build
 
 # Deploy with guided setup
 sam deploy --guided \
