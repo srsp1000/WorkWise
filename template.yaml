@@ -27,15 +27,15 @@ Parameters:
   Stage:
     Type: String
     Default: prod
-    Description: Deployment environment stage (prod, staging, dev)
+    Description: "Deployment environment stage (prod, staging, dev)"
   BedrockModelId:
     Type: String
     Default: apac.amazon.nova-lite-v1:0
-    Description: Amazon Bedrock Inference Profile ID (default: Amazon Nova Lite APAC cross-region profile for zero-friction access)
+    Description: "Amazon Bedrock Inference Profile ID (default: Amazon Nova Lite APAC cross-region profile for zero-friction access)"
   OpenMeteoTimeout:
     Type: Number
     Default: 15
-    Description: HTTP timeout in seconds for Open-Meteo weather API calls
+    Description: "HTTP timeout in seconds for Open-Meteo weather API calls"
 
 Resources:
   # 1. API Gateway HTTP API (v2) for low-latency, mobile-first invocation
