@@ -24,7 +24,7 @@
                                         ▼
                           ┌───────────────────────────┐
                           │    AWS Lambda Function    │
-                          │    (Python 3.13 Mangum)   │
+                          │    (Python 3.12 Mangum)   │
                           └──────┬─────────────┬──────┘
                                  │             │
         ┌────────────────────────┼─────────────┼────────────────────────┐
@@ -46,7 +46,7 @@
    - Ingress protection via `DefaultRouteSettings`: `ThrottlingRateLimit: 20` req/sec, `ThrottlingBurstLimit: 50`.
 3. **Compute (AWS Lambda with Mangum ASGI):**
    - Handler: `workwise_engine.lambda_handler.handler`.
-   - Memory: 512 MB | Timeout: 30 seconds | Runtime: Python 3.13.
+   - Memory: 512 MB | Timeout: 30 seconds | Runtime: Python 3.12.
    - Built-in warmup ping handler prevents cold starts.
    - Reserves no protected environment variable names (reads `AWS_REGION` natively from runtime).
 4. **Thermal Modeling & Weather (Open-Meteo):**
@@ -214,7 +214,7 @@ To prevent unexpected billing on public demo endpoints:
 ## 6. Video Demonstration Evidence Checklist
 
 When recording the project demonstration video, include the following AWS screens to prove live cloud infrastructure:
-- [ ] **AWS Lambda Console (`ap-south-1`):** Show `workwise-WorkWiseFunction-*` function code, Python 3.13 runtime, and environment variables.
+- [ ] **AWS Lambda Console (`ap-south-1`):** Show `workwise-WorkWiseFunction-*` function code, Python 3.12 runtime, and environment variables.
 - [ ] **API Gateway Console:** Show HTTP API routes (`$default` catch-all) and CORS settings.
 - [ ] **Amazon Bedrock Console:** Show inference profile usage and model activity.
 - [ ] **CloudWatch Logs:** Live log streams proving actual Lambda executions, execution times (~300ms), and absence of errors.

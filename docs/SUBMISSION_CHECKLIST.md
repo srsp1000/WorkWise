@@ -18,7 +18,7 @@
 | **9. Multimodal In** | Voice input in Hindi (`hi-IN`) and English (`en-IN`) with review modal. | **COMPLETED** | `VoiceInput.tsx` + `nlpParser.ts` with structured confirmation dialog. |
 | **10. Multimodal Out**| Spoken audio brief in Hindi/English with speed control and print layout. | **COMPLETED** | `VoiceBrief.tsx` with Polly neural synthesis & browser Web Speech fallback. |
 | **11. AI Safeguards** | Amazon Bedrock + deterministic templates + guardrails filter. | **COMPLETED** | `ai.py` rejects "100% safe" claims; 7 unit tests in `test_ai.py`. |
-| **12. AWS Deployment** | AWS SAM template, Python 3.13 Lambda Mangum handler, local runner. | **COMPLETED** | `template.yaml`, `lambda_handler.py`, and `scripts/test_lambda_local.py`. |
+| **12. AWS Deployment** | AWS SAM template, Python 3.12 Lambda Mangum handler, local runner. | **COMPLETED** | `template.yaml`, `lambda_handler.py`, and `scripts/test_lambda_local.py`. |
 | **13. Research Audit** | Script comparing fixed clock break (12-3 PM) vs dynamic WBGT. | **COMPLETED** | `scripts/historical_wbgt_audit.py` published to `docs/HISTORICAL_WBGT_RESEARCH.md`. |
 | **14. Scenarios** | 5 distinct climate scenario fixtures tested identically through planner. | **COMPLETED** | `normal`, `heatwave`, `cloudburst`, `smog_grap3`, `monsoon` in `data/scenarios/`. |
-| **15. Quality & Tests**| Comprehensive test suite & zero build errors. | **COMPLETED** | **48/48 pytest tests passing (100%)**; `npm run build` succeeds in 475ms. |
+| **15. Quality & Tests**| Comprehensive test suite & zero build errors. | **COMPLETED** | **49/49 pytest tests passing (100%)**; `npm run build` succeeds in 475ms. |

@@ -113,7 +113,7 @@ Built specifically for high-glare sunlight on Indian construction sites using a 
                                              ▼
                                ┌───────────────────────────┐
                                │    AWS Lambda Function    │
-                               │    (Python 3.13 Mangum)   │
+                               │    (Python 3.12 Mangum)   │
                                └──────┬─────────────┬──────┘
                                       │             │
              ┌────────────────────────┼─────────────┼────────────────────────┐
@@ -127,7 +127,7 @@ Built specifically for high-glare sunlight on Indian construction sites using a 
 ```
 
 The repository includes a production-ready **AWS SAM Template** ([`template.yaml`](template.yaml)) and **Mangum ASGI Lambda Handler** ([`workwise_engine/lambda_handler.py`](workwise_engine/lambda_handler.py)):
-- **`template.yaml`**: Serverless infrastructure as code defining API Gateway HTTP API v2, Python 3.13 Lambda function with IAM policies for Bedrock and Polly, and an S3 bucket with 7-day automatic lifecycle expiration.
+- **`template.yaml`**: Serverless infrastructure as code defining API Gateway HTTP API v2, Python 3.12 Lambda function with IAM policies for Bedrock and Polly, and an S3 bucket with 7-day automatic lifecycle expiration.
 - **`lambda_handler.py`**: ASGI bridge with container warm-up ping preservation and structured CloudWatch logging.
 - **Local Runner ([`scripts/test_lambda_local.py`](scripts/test_lambda_local.py))**: Executes API Gateway v2 payloads through the Lambda handler locally without requiring AWS credentials.
 

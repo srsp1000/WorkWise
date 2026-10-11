@@ -136,7 +136,7 @@ The scheduler employs a multi-pass optimization engine:
 ### F. AWS Serverless Deployment Topology (`template.yaml`)
 1. **Frontend:** React 19 PWA hosted on AWS Amplify with offline service worker.
 2. **API Gateway HTTP API v2:** Routes requests with low latency and CORS support.
-3. **Lambda Execution:** Python 3.13 running Mangum ASGI adapter with container warmup handler.
+3. **Lambda Execution:** Python 3.12 running Mangum ASGI adapter with container warmup handler.
 4. **Amazon Bedrock:** Converse API with Anthropic Claude 3.5 Haiku / Amazon Nova Lite inference profiles (`apac.*`) for grounded supervisor explanations.
 5. **Amazon Polly:** Synthesizes neural bilingual Hindi and Indian English dispatches using voice `Kajal` (with browser Web Speech API fallback).
 6. **Amazon S3:** Persists shift audio dispatches and checklists with a 7-day automatic lifecycle expiration.
