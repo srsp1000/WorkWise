@@ -1,67 +1,84 @@
-# WorkWise — Phase 1
+# WorkWise (कामवाइज़)
 
-Climate-aware construction work scheduling engine.
+**Mobile-First, India-Aware Construction Workability & Scheduling Assistant**
 
-Phase 1 goal:
+WorkWise helps construction supervisors in India make informed, defensible operational decisions under extreme weather and environmental constraints (dry heat, humid monsoons, thunderstorms, and CAQM GRAP air pollution stages).
 
-> Given a construction site, crew type, tasks, and hourly weather, generate a task × hour safety matrix and a feasible work schedule.
+---
 
-This phase intentionally has **no React UI, no Bedrock, and no voice**. The engine must be correct and testable before we add the communication layer.
+## Architecture & Product Hierarchy
 
-## Safety note
+WorkWise separates **environmental workability screening** from **deterministic task scheduling**:
 
-WorkWise is a prototype planning aid, not medical advice, legal compliance advice, or a replacement for site-specific WBGT measurement and a qualified safety professional. Thresholds in `config.py` are explicit prototype assumptions derived from occupational-heat guidance; production use requires expert validation and site-specific controls.
+1. **Context & Environmental Baseline:** Compact site, time, crew acclimatization, and weather indicators.
+2. **One-Sentence Signature Recommendation:** Clear operational directive above the heatmap answering what should change and why.
+3. **Workability Heatmap (Primary Experience):** 4 standardized workload/exposure tiers across the shift:
+   - Light (Indoor/Shaded)
+   - Moderate (Outdoor)
+   - Heavy (Outdoor)
+   - Very Heavy (Demanding Masonry / Heavy Lifting)
+4. **Prioritised Operational Recommendations:** 3 actionable decision-support cards with concrete alternatives and interactive one-click application.
+5. **Proposed Construction Work Schedule:** Deterministic Gantt schedule honoring prerequisites, crew headcount limits, continuous placement constraints, and configurable intensity.
+6. **Bilingual Dispatch & Explainability:** Multi-lingual voice briefing (Hindi / Indian English) and tap-to-explain safety rule diagnostics.
 
-## Data sources
+---
 
-- Open-Meteo hourly weather forecast.
-- NIOSH occupational heat guidance for the conceptual relationship between workload, WBGT, acclimatization, and work/rest controls.
-- `thermofeel` Liljegren WBGT is the preferred calculation when installed; a clearly labeled simple fallback exists so the engine remains runnable during development.
+## Core Technical Principles & Corrections
 
-## Run
+1. **Physical Exposure Modeling (No Arbitrary Shade Offsets):**
+   - Removed fixed −4°C shade adjustments. In-shade conditions are calculated physically ($SW = 0, \text{Direct} = 0$) using Liljegren / ISO 7243 algorithms.
+   - Missing or null meteorological variables produce `DATA_UNAVAILABLE` rather than fabricated values.
+2. **Versioned Occupational Screening Thresholds:**
+   - Calibrated against published OSHA / NIOSH continuous work screening benchmarks:
+     - **Light (200W):** 30.0°C (Acclimatized) / 28.0°C (Unacclimatized)
+     - **Moderate (300W):** 28.0°C (Acclimatized) / 25.0°C (Unacclimatized)
+     - **Heavy (400W):** 26.0°C (Acclimatized) / 23.0°C (Unacclimatized)
+     - **Very Heavy (500W):** 25.0°C (Acclimatized) / 21.0°C (Unacclimatized)
+   - Passing a screening tier indicates hours meeting criteria, not a guarantee of absolute safety.
+3. **Decoupled Task Intensity:**
+   - Supervisors can configure workload intensity (`light`, `moderate`, `heavy`, `very_heavy`) independently of task name.
+4. **Configurable Regulatory & Weather Gates:**
+   - CAQM GRAP dust mitigation restrictions aligned with the revised schedule dated **29 September 2026**.
+   - Configurable equipment wind thresholds, task rain sensitivities, and optional continuous placement constraints.
+5. **Interactive Recommendation Validation:**
+   - Applying a recommendation regenerates and validates the entire daily schedule in real-time before acceptance.
 
+---
+
+## Quickstart
+
+### Prerequisites
+- Python 3.10+ (tested on Python 3.13)
+- Node.js 18+ & npm
+
+### 1. Backend Engine
 ```bash
-python -m venv .venv
-# Windows
-.venv\\Scripts\\activate
-# macOS/Linux
-source .venv/bin/activate
-
+# In repository root
 pip install -r requirements.txt
-python demo.py
+
+# Run automated tests (25/25 passing)
+py -m pytest
+
+# Start FastAPI engine on port 8008
+py -m uvicorn workwise_engine.api:app --host 127.0.0.1 --port 8008 --reload
 ```
 
-## Phase 1 API shape
-
-Input:
-
-```json
-{
-  "lat": 28.6139,
-  "lon": 77.2090,
-  "crew_size": 18,
-  "new_crew": false,
-  "start": "06:00",
-  "end": "18:00",
-  "tasks": [
-    {"id": "concrete", "duration_h": 3},
-    {"id": "rebar", "duration_h": 4},
-    {"id": "brickwork", "duration_h": 3},
-    {"id": "material_prep", "duration_h": 2}
-  ]
-}
+### 2. Frontend Web App
+```bash
+cd frontend
+npm install
+npm run build
+npm run dev
 ```
 
-Output contains hourly weather, WBGT, state/gates per task, and the auto-scheduled tasks.
+Visit `http://localhost:5173` to explore WorkWise in your browser or mobile viewport.
 
-## Phase 1 rules
+---
 
-1. Physics/rules first; AI is not part of the decision path.
-2. Gates beat heat score.
-3. Every task gets a task-specific limit and an explainable margin.
-4. A schedule is only valid if every hour in a task's window is feasible.
-5. Prototype thresholds are assumptions until reviewed by a qualified occupational-safety/civil-engineering expert.
+## Pre-Loaded Indian Scenarios
 
-## Local/offline development
-
-`demo_offline.py` runs from `sample_weather.json`, so development does not depend on a live API.
+1. **Normal Summer Day:** Baseline seasonal pattern with moderate afternoon peak.
+2. **Severe Heatwave:** Extreme temperatures (45°C+) testing midday heat shifts and shaded rotations.
+3. **Cloudburst & Thunderstorm:** High winds and sudden precipitation triggering equipment safety gates.
+4. **Smog & GRAP Stage III:** Severe winter air pollution triggering CAQM dust-generating work bans.
+5. **Monsoon Hot & Humid:** Oppressive tropical humidity (35°C, 80%+ RH) generating severe wet-bulb heat stress.

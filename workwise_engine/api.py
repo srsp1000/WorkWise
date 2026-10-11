@@ -1,20 +1,43 @@
+"""WorkWise Safety Engine REST API.
+
+Provides structured endpoints for:
+- Task catalog & CAQM GRAP definitions.
+- City locations list.
+- Real-time weather dashboard data.
+- Live weather plan generation with full schema validation and provenance metadata.
+- Pre-configured scenario simulations (normal, heatwave, cloudburst, smog_grap3, monsoon).
+- Spoken audio synthesis endpoint (Amazon Polly with browser fallback).
+"""
+
+from __future__ import annotations
 from datetime import date, datetime
+import hashlib
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Path as APIPath
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .config import GRAP_STAGES, TASKS
-from .engine import build_matrix, schedule_tasks
+from .cities import get_cities_list
+from .config import (
+    CONFIG_VERSION,
+    GRAP_STAGES,
+    TASKS,
+    WORKABILITY_TIERS,
+)
+from .engine import (
+    build_matrix,
+    build_workability_heatmap,
+    generate_signature_recommendations,
+    schedule_tasks,
+)
 from .scenarios import list_scenarios, load_scenario_rows
-from .weather import fetch_hourly
-
+from .weather import DATA_ATTRIBUTION, fetch_current, fetch_hourly
 
 app = FastAPI(
     title="WorkWise Safety Engine API",
-    description="Climate-aware construction work scheduling & WBGT safety engine API",
-    version="1.0.0",
+    description="Mobile-first, India-aware construction workability and scheduling assistant API",
+    version=CONFIG_VERSION,
 )
 
 app.add_middleware(
@@ -26,19 +49,26 @@ app.add_middleware(
 )
 
 
+# --- Input Request Schemas ---
+
 class TaskItem(BaseModel):
-    id: str = Field(..., json_schema_extra={"example": "concrete"}, description="Task identifier from task catalog")
+    id: str = Field(..., json_schema_extra={"example": "concrete"}, description="Task identifier from catalog")
     duration_h: Optional[int] = Field(None, json_schema_extra={"example": 3}, description="Custom duration in hours")
-    depends_on: Optional[list[str]] = Field(None, description="Optional prerequisite task IDs")
-    crew_required: Optional[int] = Field(None, description="Optional worker count required")
+    intensity: Optional[str] = Field(None, description="Workload intensity: light, moderate, heavy, very_heavy")
+    continuous: Optional[bool] = Field(None, description="Whether continuous execution without pause is enforced")
+    completed_prior: Optional[bool] = Field(False, description="True if prerequisite work was inspected/finished in prior shift")
+    depends_on: Optional[list[str]] = Field(None, description="Prerequisite task IDs")
+    crew_required: Optional[int] = Field(None, description="Worker count required")
+    equipment_wind_limit_kmh: Optional[float] = Field(None, description="Equipment wind gust threshold in km/h")
+    rain_sensitive: Optional[bool] = Field(None, description="Whether task is blocked by precipitation wash")
 
 
 class PlanRequest(BaseModel):
     lat: float = Field(28.6139, json_schema_extra={"example": 28.6139}, description="Site latitude")
     lon: float = Field(77.2090, json_schema_extra={"example": 77.2090}, description="Site longitude")
-    date_str: Optional[str] = Field(None, json_schema_extra={"example": "2026-10-08"}, description="Target date in YYYY-MM-DD format")
-    new_crew: bool = Field(False, description="True if crew is unacclimated")
-    grap_stage: int = Field(0, ge=0, le=4, description="GRAP pollution stage (0-4)")
+    date_str: Optional[str] = Field(None, json_schema_extra={"example": "2026-10-11"}, description="Target date in YYYY-MM-DD format")
+    new_crew: bool = Field(False, description="True if crew is unacclimatized")
+    grap_stage: int = Field(0, ge=0, le=4, description="CAQM GRAP stage (0-4)")
     shift_start_hour: int = Field(6, ge=0, le=23, description="Shift start hour (0-23)")
     shift_end_hour: int = Field(18, ge=1, le=24, description="Shift end hour (1-24)")
     total_crew_size: int = Field(18, ge=1, description="Total site crew capacity")
@@ -47,7 +77,9 @@ class PlanRequest(BaseModel):
 
 
 class ScenarioPlanRequest(BaseModel):
-    new_crew: bool = Field(False, description="True if crew is unacclimated")
+    lat: float = Field(28.6139, description="Site latitude")
+    lon: float = Field(77.2090, description="Site longitude")
+    new_crew: bool = Field(False, description="True if crew is unacclimatized")
     grap_stage: Optional[int] = Field(None, ge=0, le=4, description="Override GRAP stage")
     shift_start_hour: int = Field(6, ge=0, le=23, description="Shift start hour (0-23)")
     shift_end_hour: int = Field(18, ge=1, le=24, description="Shift end hour (1-24)")
@@ -56,11 +88,181 @@ class ScenarioPlanRequest(BaseModel):
     tasks: list[TaskItem] = Field(..., description="List of tasks to schedule")
 
 
+# --- Output Response Contract Schemas ---
+
+class TaskHourCellModel(BaseModel):
+    time: str
+    task_id: str
+    task: str
+    intensity: str
+    outdoor: bool = True
+    wbgt_c: Optional[float] = None
+    effective_wbgt_c: Optional[float] = None
+    wbgt_method: str
+    limit_c: float
+    margin_c: Optional[float] = None
+    state: str
+    work_rest: str
+    gates: list[str] = []
+    why: list[str] = []
+    assumptions: list[str] = []
+
+
+class WorkabilityHeatmapRowModel(BaseModel):
+    tier_id: str
+    tier_label: str
+    description: str
+    intensity: str
+    outdoor: bool
+    cells: list[TaskHourCellModel]
+
+
+class HourlyMatrixRowModel(BaseModel):
+    time: str
+    tasks: dict[str, TaskHourCellModel]
+
+
+class ScheduledTaskModel(BaseModel):
+    task_id: str
+    task: str
+    status: str
+    start: Optional[str] = None
+    end: Optional[str] = None
+    continuous: bool = False
+    is_split: bool = False
+    cost: Optional[float] = None
+    crew_required: Optional[int] = None
+    worst_state: Optional[str] = None
+    why_scheduled: Optional[str] = None
+    why_unschedulable: Optional[str] = None
+    recommended_action: Optional[str] = None
+
+
+class PrioritizedActionModel(BaseModel):
+    id: str
+    title: str
+    action: str
+    affected: str
+    why: str
+    constraint: str
+    alternative: str
+    can_apply: bool = False
+    apply_payload: Optional[dict] = None
+
+
+class PlanMetadataModel(BaseModel):
+    plan_id: str
+    generated_at: str
+    engine_version: str = CONFIG_VERSION
+    data_source: str
+    is_simulated: bool = False
+    attribution: str = DATA_ATTRIBUTION
+    data_freshness: str
+    scientific_basis: str = "Liljegren (2008) WBGT, OSHA Technical Manual Sec III Ch 4 & NIOSH (2016) Criteria"
+
+
+class InputAssumptionsModel(BaseModel):
+    site: str
+    lat: float
+    lon: float
+    date: str
+    shift_window: str
+    total_crew_size: int
+    new_crew: bool
+    grap_stage: int
+    grap_description: str
+    max_concurrent_tasks: int
+
+
+class RestRecommendationModel(BaseModel):
+    heat_protocol_window: Optional[str] = None
+    work_rest_cycle: str
+    hydration_guideline: str
+    shade_requirement: str
+
+
+class PlanResponseModel(BaseModel):
+    site: Optional[str] = None
+    scenario_id: Optional[str] = None
+    date: str
+    grap_stage: int
+    grap_description: str
+    new_crew: bool
+    total_crew_size: int
+    workability_heatmap: list[WorkabilityHeatmapRowModel]
+    matrix: list[HourlyMatrixRowModel]
+    schedule: list[ScheduledTaskModel]
+    top_recommendation: str
+    prioritized_actions: list[PrioritizedActionModel]
+    plan_summary: str
+    metadata: PlanMetadataModel
+    input_assumptions: InputAssumptionsModel
+    rest_recommendations: RestRecommendationModel
+    limitations_disclaimer: str = (
+        "WorkWise is a planning and decision-support aid based on forecast meteorological modeling "
+        "and OSHA/NIOSH screening guidelines. Meeting screening criteria does not guarantee absolute safety. "
+        "It does not replace on-site calibrated WBGT instruments, certified medical supervision, "
+        "or site safety officer authority."
+    )
+
+
+# --- Helpers ---
+
+def _build_rest_recommendations(matrix: list[dict], new_crew: bool) -> RestRecommendationModel:
+    stress_hours = []
+    for row in matrix:
+        for tid, cell in row.get("tasks", {}).items():
+            if cell.get("state") in {"EASE", "LIMIT", "STOP"}:
+                t_dt = datetime.fromisoformat(row["time"])
+                stress_hours.append(t_dt.hour)
+                break
+
+    if not stress_hours:
+        return RestRecommendationModel(
+            heat_protocol_window="No thermal protocol required",
+            work_rest_cycle="Standard continuous work with scheduled hydration breaks",
+            hydration_guideline="Provide 0.5 L cool potable water per worker per hour.",
+            shade_requirement="Ensure accessible shaded rest canopy adjacent to work areas.",
+        )
+
+    first_h = min(stress_hours)
+    last_h = max(stress_hours) + 1
+    window_str = f"{first_h:02d}:00 – {last_h:02d}:00"
+
+    has_limit_or_stop = any(
+        cell.get("state") in {"LIMIT", "STOP"} for r in matrix for cell in r.get("tasks", {}).values()
+    )
+    cycle = (
+        "30 min work / 30 min rest screening guidance (LIMIT state)"
+        if has_limit_or_stop
+        else "45 min work / 15 min rest screening guidance (EASE state)"
+    )
+
+    hydration = "Mandate 1.0 L (4 cups) cool potable water per worker per hour. Schedule drinking every 15–20 minutes."
+    if new_crew:
+        hydration += " Closely monitor new/unacclimatized workers for early symptoms of heat illness."
+
+    return RestRecommendationModel(
+        heat_protocol_window=window_str,
+        work_rest_cycle=cycle,
+        hydration_guideline=hydration,
+        shade_requirement="Mandatory shaded break canopy with active airflow adjacent to active work zones.",
+    )
+
+
+def _generate_plan_id(lat: float, lon: float, date_str: str) -> str:
+    raw = f"{lat}:{lon}:{date_str}:{datetime.now().isoformat()}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
+# --- Endpoints ---
+
 @app.get("/api/health", summary="Health Check")
 def health_check():
     return {
         "status": "ok",
         "service": "WorkWise Safety Engine API",
+        "version": CONFIG_VERSION,
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -79,14 +281,32 @@ def get_task_catalog():
                 "dust_generating": v.dust_generating,
                 "depends_on": list(v.depends_on),
                 "crew_required": v.crew_required,
+                "equipment_wind_limit_kmh": v.equipment_wind_limit_kmh,
+                "rain_sensitive": v.rain_sensitive,
+                "source_reference": v.source_reference,
             }
             for k, v in TASKS.items()
         },
+        "workability_tiers": WORKABILITY_TIERS,
         "grap_stages": GRAP_STAGES,
+        "version": CONFIG_VERSION,
     }
 
 
-@app.post("/api/plan", summary="Generate Work Schedule from Live Forecast")
+@app.get("/api/cities", summary="Get list of Indian cities")
+def get_cities():
+    return {"cities": get_cities_list()}
+
+
+@app.get("/api/weather/current", summary="Get current weather for location")
+def get_current_weather(lat: float, lon: float):
+    try:
+        return fetch_current(lat, lon)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch current weather: {str(e)}")
+
+
+@app.post("/api/plan", response_model=PlanResponseModel, summary="Generate Work Schedule from Live Forecast")
 def generate_live_plan(req: PlanRequest):
     for t in req.tasks:
         if t.id not in TASKS:
@@ -94,7 +314,7 @@ def generate_live_plan(req: PlanRequest):
 
     target_date = req.date_str or date.today().isoformat()
     try:
-        rows = fetch_hourly(req.lat, req.lon, target_date, target_date)
+        rows = fetch_hourly(req.lat, req.lon, target_date, target_date, use_fallback_on_failure=True)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Weather API error: {str(e)}")
 
@@ -102,53 +322,119 @@ def generate_live_plan(req: PlanRequest):
     if not rows:
         raise HTTPException(status_code=400, detail="No hourly weather data found for requested shift window")
 
-    task_ids = [t.id for t in req.tasks]
-    matrix = build_matrix(
-        rows,
-        task_ids,
-        req.new_crew,
-        req.lat,
-        req.lon,
-        grap_stage=req.grap_stage,
-    )
-
     task_dicts = [
         {
             "id": t.id,
             "duration_h": t.duration_h,
+            "intensity": t.intensity,
+            "continuous": t.continuous,
+            "completed_prior": t.completed_prior,
             "depends_on": t.depends_on,
             "crew_required": t.crew_required,
+            "equipment_wind_limit_kmh": t.equipment_wind_limit_kmh,
+            "rain_sensitive": t.rain_sensitive,
         }
         for t in req.tasks
     ]
-    plan = schedule_tasks(
-        matrix,
-        task_dicts,
-        day_start=req.shift_start_hour * 60,
-        total_crew_size=req.total_crew_size,
-        max_concurrent_tasks=req.max_concurrent_tasks,
-    )
 
-    return {
-        "site": f"Lat {req.lat}, Lon {req.lon}",
-        "date": target_date,
-        "grap_stage": req.grap_stage,
-        "grap_description": GRAP_STAGES.get(req.grap_stage, "Unknown"),
-        "new_crew": req.new_crew,
-        "total_crew_size": req.total_crew_size,
-        "matrix": matrix,
-        "schedule": plan,
-    }
+    try:
+        # 1. Primary Workability Heatmap across 4 tiers
+        workability_heatmap = build_workability_heatmap(
+            rows,
+            req.new_crew,
+            req.lat,
+            req.lon,
+            grap_stage=req.grap_stage,
+        )
+
+        # 2. Specific Task Matrix
+        matrix = build_matrix(
+            rows,
+            task_dicts,
+            req.new_crew,
+            req.lat,
+            req.lon,
+            grap_stage=req.grap_stage,
+        )
+
+        # 3. Constraint-aware Task Schedule
+        plan = schedule_tasks(
+            matrix,
+            task_dicts,
+            day_start=req.shift_start_hour * 60,
+            total_crew_size=req.total_crew_size,
+            max_concurrent_tasks=req.max_concurrent_tasks,
+        )
+
+        # 4. Signature Recommendations
+        top_rec, prioritized_actions = generate_signature_recommendations(
+            matrix=matrix,
+            workability_heatmap=workability_heatmap,
+            schedule=plan,
+            weather_rows=rows,
+            city_name="Site Location",
+            new_crew=req.new_crew,
+        )
+
+        plan_id = _generate_plan_id(req.lat, req.lon, target_date)
+        rest_recs = _build_rest_recommendations(matrix, req.new_crew)
+
+        metadata = PlanMetadataModel(
+            plan_id=plan_id,
+            generated_at=datetime.now().isoformat(),
+            engine_version=CONFIG_VERSION,
+            data_source="Open-Meteo Forecast API",
+            is_simulated=False,
+            attribution=DATA_ATTRIBUTION,
+            data_freshness=f"Hourly forecast retrieved for {target_date}",
+        )
+
+        input_assumptions = InputAssumptionsModel(
+            site=f"Lat {req.lat:.4f}, Lon {req.lon:.4f}",
+            lat=req.lat,
+            lon=req.lon,
+            date=target_date,
+            shift_window=f"{req.shift_start_hour:02d}:00 – {req.shift_end_hour:02d}:00",
+            total_crew_size=req.total_crew_size,
+            new_crew=req.new_crew,
+            grap_stage=req.grap_stage,
+            grap_description=GRAP_STAGES.get(req.grap_stage, "Unknown"),
+            max_concurrent_tasks=req.max_concurrent_tasks,
+        )
+
+        return PlanResponseModel(
+            site=f"Lat {req.lat:.4f}, Lon {req.lon:.4f}",
+            scenario_id=None,
+            date=target_date,
+            grap_stage=req.grap_stage,
+            grap_description=GRAP_STAGES.get(req.grap_stage, "Unknown"),
+            new_crew=req.new_crew,
+            total_crew_size=req.total_crew_size,
+            workability_heatmap=workability_heatmap,
+            matrix=matrix,
+            schedule=plan,
+            top_recommendation=top_rec,
+            prioritized_actions=prioritized_actions,
+            plan_summary=top_rec,
+            metadata=metadata,
+            input_assumptions=input_assumptions,
+            rest_recommendations=rest_recs,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate live plan: {str(e)}")
 
 
 @app.get("/api/scenarios", summary="List Pre-configured Scenarios")
 def get_scenarios():
-    return {"scenarios": list_scenarios()}
+    try:
+        return {"scenarios": list_scenarios()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list scenarios: {str(e)}")
 
 
-@app.post("/api/scenarios/{scenario_id}/plan", summary="Generate Work Schedule from Scenario Data")
+@app.post("/api/scenarios/{scenario_id}/plan", response_model=PlanResponseModel, summary="Generate Work Schedule from Scenario Data")
 def generate_scenario_plan(
-    scenario_id: str = APIPath(..., description="Scenario identifier (e.g. normal, heatwave, cloudburst, smog_grap3)"),
+    scenario_id: str = APIPath(..., description="Scenario identifier"),
     req: ScenarioPlanRequest = ...,
 ):
     for t in req.tasks:
@@ -165,41 +451,167 @@ def generate_scenario_plan(
         raise HTTPException(status_code=400, detail="No scenario rows found for requested shift window")
 
     grap = req.grap_stage if req.grap_stage is not None else rows[0].get("default_grap_stage", 0)
-    lat, lon = 28.6139, 77.2090
-    task_ids = [t.id for t in req.tasks]
-
-    matrix = build_matrix(
-        rows,
-        task_ids,
-        req.new_crew,
-        lat,
-        lon,
-        grap_stage=grap,
-    )
 
     task_dicts = [
         {
             "id": t.id,
             "duration_h": t.duration_h,
+            "intensity": t.intensity,
+            "continuous": t.continuous,
+            "completed_prior": t.completed_prior,
             "depends_on": t.depends_on,
             "crew_required": t.crew_required,
+            "equipment_wind_limit_kmh": t.equipment_wind_limit_kmh,
+            "rain_sensitive": t.rain_sensitive,
         }
         for t in req.tasks
     ]
-    plan = schedule_tasks(
-        matrix,
-        task_dicts,
-        day_start=req.shift_start_hour * 60,
-        total_crew_size=req.total_crew_size,
-        max_concurrent_tasks=req.max_concurrent_tasks,
-    )
 
-    return {
-        "scenario_id": scenario_id,
-        "grap_stage": grap,
-        "grap_description": GRAP_STAGES.get(grap, "Unknown"),
-        "new_crew": req.new_crew,
-        "total_crew_size": req.total_crew_size,
-        "matrix": matrix,
-        "schedule": plan,
-    }
+    try:
+        # 1. Primary Workability Heatmap across 4 tiers
+        workability_heatmap = build_workability_heatmap(
+            rows,
+            req.new_crew,
+            req.lat,
+            req.lon,
+            grap_stage=grap,
+        )
+
+        # 2. Specific Task Matrix
+        matrix = build_matrix(
+            rows,
+            task_dicts,
+            req.new_crew,
+            req.lat,
+            req.lon,
+            grap_stage=grap,
+        )
+
+        # 3. Constraint-aware Task Schedule
+        plan = schedule_tasks(
+            matrix,
+            task_dicts,
+            day_start=req.shift_start_hour * 60,
+            total_crew_size=req.total_crew_size,
+            max_concurrent_tasks=req.max_concurrent_tasks,
+        )
+
+        scenario_name = scenario_id.replace("_", " ").title()
+
+        # 4. Signature Recommendations
+        top_rec, prioritized_actions = generate_signature_recommendations(
+            matrix=matrix,
+            workability_heatmap=workability_heatmap,
+            schedule=plan,
+            weather_rows=rows,
+            city_name=scenario_name,
+            new_crew=req.new_crew,
+        )
+
+        target_date = rows[0]["time"].strftime("%Y-%m-%d") if hasattr(rows[0]["time"], "strftime") else "2026-10-11"
+        plan_id = f"scenario-{scenario_id}-{_generate_plan_id(req.lat, req.lon, target_date)}"
+        rest_recs = _build_rest_recommendations(matrix, req.new_crew)
+
+        metadata = PlanMetadataModel(
+            plan_id=plan_id,
+            generated_at=datetime.now().isoformat(),
+            engine_version=CONFIG_VERSION,
+            data_source=f"Pre-configured Scenario: {scenario_id}",
+            is_simulated=True,
+            attribution="Simulated environmental testing fixture (WorkWise Research)",
+            data_freshness="Deterministic historical/scenario fixture",
+        )
+
+        input_assumptions = InputAssumptionsModel(
+            site=f"Scenario: {scenario_name}",
+            lat=req.lat,
+            lon=req.lon,
+            date=target_date,
+            shift_window=f"{req.shift_start_hour:02d}:00 – {req.shift_end_hour:02d}:00",
+            total_crew_size=req.total_crew_size,
+            new_crew=req.new_crew,
+            grap_stage=grap,
+            grap_description=GRAP_STAGES.get(grap, "Unknown"),
+            max_concurrent_tasks=req.max_concurrent_tasks,
+        )
+
+        return PlanResponseModel(
+            site=f"Scenario: {scenario_name}",
+            scenario_id=scenario_id,
+            date=target_date,
+            grap_stage=grap,
+            grap_description=GRAP_STAGES.get(grap, "Unknown"),
+            new_crew=req.new_crew,
+            total_crew_size=req.total_crew_size,
+            workability_heatmap=workability_heatmap,
+            matrix=matrix,
+            schedule=plan,
+            top_recommendation=top_rec,
+            prioritized_actions=prioritized_actions,
+            plan_summary=top_rec,
+            metadata=metadata,
+            input_assumptions=input_assumptions,
+            rest_recommendations=rest_recs,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate scenario plan: {str(e)}")
+
+
+class AudioSynthesisRequest(BaseModel):
+    text: str = Field(..., max_length=1500)
+    language: str = Field("hi-IN", description="'hi-IN' or 'en-IN'")
+    voice_id: Optional[str] = Field(None, description="Amazon Polly voice ID (e.g., 'Kajal', 'Aditi')")
+
+
+@app.post("/api/audio/synthesize", summary="Synthesize Spoken Brief Audio")
+def synthesize_audio(req: AudioSynthesisRequest):
+    """Audio synthesis endpoint supporting Amazon Polly with browser fallback."""
+    import os
+    aws_region = os.getenv("AWS_REGION", "ap-south-1")
+    has_aws = bool(os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"))
+
+    if not has_aws:
+        return {
+            "status": "fallback",
+            "provider": "browser_fallback",
+            "mode": "browser_fallback",
+            "audio_base64": None,
+            "text": req.text,
+            "language": req.language,
+            "notice": "Amazon Polly credentials not configured. Using client-side Web Speech API.",
+        }
+
+    try:
+        import boto3
+        import base64
+        polly = boto3.client("polly", region_name=aws_region)
+        voice = req.voice_id or ("Kajal" if req.language == "hi-IN" else "Aditi")
+        response = polly.synthesize_speech(
+            Text=req.text,
+            OutputFormat="mp3",
+            VoiceId=voice,
+            Engine="neural",
+        )
+        audio_stream = response.get("AudioStream")
+        if audio_stream:
+            audio_bytes = audio_stream.read()
+            b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+            return {
+                "status": "success",
+                "provider": "amazon_polly",
+                "mode": "polly_neural",
+                "audio_base64": b64_audio,
+                "text": req.text,
+                "language": req.language,
+                "voice": voice,
+            }
+    except Exception as e:
+        return {
+            "status": "fallback",
+            "provider": "browser_fallback",
+            "mode": "browser_fallback",
+            "audio_base64": None,
+            "text": req.text,
+            "language": req.language,
+            "notice": f"Polly service exception: {str(e)}. Using browser Web Speech API.",
+        }

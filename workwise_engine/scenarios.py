@@ -27,8 +27,14 @@ SCENARIO_METADATA = {
     "smog_grap3": {
         "id": "smog_grap3",
         "title": "Smog & GRAP Stage III",
-        "description": "Severe air pollution triggering GRAP Stage III dust construction ban.",
+        "description": "Severe air pollution triggering GRAP Stage III dust construction ban (CAQM Sep 2026).",
         "default_grap_stage": 3,
+    },
+    "monsoon": {
+        "id": "monsoon",
+        "title": "Monsoon Hot & Humid",
+        "description": "Oppressive tropical humidity (35°C, 80%+ RH) generating severe thermal stress.",
+        "default_grap_stage": 0,
     },
 }
 
