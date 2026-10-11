@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:zip": "tsc -b && vite build && py ../scripts/package_frontend.py",
     "lint": "oxlint",
     "preview": "vite preview"
   },
