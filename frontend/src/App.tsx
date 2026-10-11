@@ -10,7 +10,8 @@ import {
   fetchScenariosList,
   generateLivePlan,
   generateScenarioPlan,
-  reverseGeocode
+  reverseGeocode,
+  API_BASE
 } from './services/api';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import type {
@@ -148,7 +149,7 @@ export function App() {
         setPlan(initPlan);
       } catch (err: any) {
         console.warn('Backend API notice:', err.message);
-        setError('Backend API is connecting... Ensure uvicorn server is running on http://127.0.0.1:8008');
+        setError(`Backend API notice: ${err.message || 'Connecting to server...'}. Endpoint: ${API_BASE}`);
       } finally {
         setIsLoading(false);
       }

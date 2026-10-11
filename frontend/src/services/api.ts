@@ -7,7 +7,18 @@ import type {
   CityItem
 } from '../types/api';
 
-const rawBase = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '') ?? '/api';
+const LIVE_API_URL = 'https://ur0qwu5k8d.execute-api.ap-south-1.amazonaws.com/api';
+
+const isDev = typeof window !== 'undefined' && Boolean(
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.port === '5180' ||
+  window.location.port === '5173'
+);
+
+const envBase = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '');
+const defaultBase = isDev ? '/api' : LIVE_API_URL;
+const rawBase = envBase || defaultBase;
 export const API_BASE = rawBase.endsWith('/api') ? rawBase : `${rawBase}/api`;
 
 export async function fetchTasksCatalog(): Promise<TasksCatalogResponse> {
