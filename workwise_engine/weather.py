@@ -113,7 +113,9 @@ def load_sample_weather_fallback() -> list[dict]:
     for r in rows:
         if isinstance(r.get("time"), str):
             r["time"] = datetime.fromisoformat(r["time"])
+        r["is_sample_fallback"] = True
     return rows
+
 
 
 def fetch_hourly(

@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  WorkWise Safety Engine - Climate-Aware Construction Scheduling & Worker Communication Platform.
+  Serverless backend running FastAPI on AWS Lambda, API Gateway HTTP API, Amazon Bedrock,
+  Amazon Polly, and Amazon S3 for generated voice briefings and reports.
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: python3.13
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        PYTHONPATH: "."
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        S3_STORAGE_BUCKET: !Ref WorkWiseReportsBucket
+  Api:
+    Cors:
+      AllowMethods: "'GET,POST,OPTIONS'"
+      AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      AllowOrigin: "'*'"
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+    Description: Deployment environment stage (prod, staging, dev)
+  BedrockModelId:
+    Type: String
+    Default: apac.amazon.nova-lite-v1:0
+    Description: Amazon Bedrock Inference Profile ID (default: Amazon Nova Lite APAC cross-region profile for zero-friction access)
+  OpenMeteoTimeout:
+    Type: Number
+    Default: 15
+    Description: HTTP timeout in seconds for Open-Meteo weather API calls
+
+Resources:
+  # 1. API Gateway HTTP API (v2) for low-latency, mobile-first invocation
+  WorkWiseHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+        MaxAge: 600
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 20
+
+  # 2. Main WorkWise Engine Lambda Function running FastAPI via Mangum
+  WorkWiseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: workwise_engine.lambda_handler.handler
+      CodeUri: .
+      Description: WorkWise deterministic scheduling engine and AI assistance handler
+      Policies:
+        # Permission to write structured CloudWatch logs
+        - AWSLambdaBasicExecutionRole
+        # Permission to query Amazon Bedrock models and inference profiles for AI explanations
+        - Statement:
+            - Sid: BedrockInvokeModelAccess
+              Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource:
+                - "arn:aws:bedrock:*::foundation-model/*"
+                - "arn:aws:bedrock:*:*:inference-profile/*"
+        # Permission to synthesize neural speech via Amazon Polly
+        - Statement:
+            - Sid: PollySynthesizeSpeechAccess
+              Effect: Allow
+              Action:
+                - polly:SynthesizeSpeech
+              Resource: "*"
+        # Permission to read/write spoken audio briefs and reports in S3
+        - Statement:
+            - Sid: S3ReportsBucketAccess
+              Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !GetAtt WorkWiseReportsBucket.Arn
+                - !Sub "${WorkWiseReportsBucket.Arn}/*"
+      Events:
+        ApiRoot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref WorkWiseHttpApi
+            Path: /
+            Method: ANY
+        ApiProxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref WorkWiseHttpApi
+            Path: /{proxy+}
+            Method: ANY
+
+  # 3. S3 Bucket for Generated Audio Briefings and Shift Inspection Reports
+  WorkWiseReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "workwise-briefs-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldAudioFilesAfter7Days
+            Status: Enabled
+            ExpirationInDays: 7
+
+Outputs:
+  WorkWiseApiEndpoint:
+    Description: Public HTTP API endpoint URL for WorkWise backend
+    Value: !Sub "https://${WorkWiseHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Export:
+      Name: WorkWiseApiEndpoint
+
+  WorkWiseFunctionArn:
+    Description: Lambda Function ARN for WorkWise Safety Engine
+    Value: !GetAtt WorkWiseFunction.Arn
+
+  WorkWiseReportsBucketName:
+    Description: S3 bucket name for shift audio briefings and reports
+    Value: !Ref WorkWiseReportsBucket

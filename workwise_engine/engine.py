@@ -742,7 +742,13 @@ def generate_signature_recommendations(
                 "why": f"Currently scheduled at {concrete_scheduled['start']}, overlapping higher thermal and evaporation conditions.",
                 "constraint": "Batching plant delivery timing and rebar inspection sign-off.",
                 "alternative": "Confirm prior rebar tie inspection today to enable early 06:00 concrete placement tomorrow.",
-                "can_apply": False,
+                "can_apply": True,
+                "apply_payload": {
+                    "action_type": "early_concrete",
+                    "task_id": "rebar",
+                    "target_task_id": "concrete",
+                    "set_completed_prior": True,
+                },
             })
 
     return top_rec, prioritized_actions[:3]

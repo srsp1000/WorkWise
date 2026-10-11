@@ -201,3 +201,36 @@ export interface PlanRequestPayload {
   max_concurrent_tasks: number;
   tasks: TaskItemInput[];
 }
+
+export interface AIExplanationResponse {
+  provider: 'amazon_bedrock' | 'deterministic_template';
+  model_id?: string;
+  explanation_en: string;
+  explanation_hi: string;
+  key_points: string[];
+  disclaimer: string;
+  validated: boolean;
+  ground_truth_matches: boolean;
+}
+
+export interface AIAskResponse {
+  provider: 'amazon_bedrock' | 'deterministic_template';
+  model_id?: string;
+  question: string;
+  answer: string;
+  answer_hi?: string;
+  referenced_tasks: string[];
+  citations: string[];
+  disclaimer: string;
+  validated: boolean;
+}
+
+export interface AIRephraseResponse {
+  provider: 'amazon_bedrock' | 'deterministic_template';
+  original_text: string;
+  rephrased_en: string;
+  rephrased_hi: string;
+  target_audience: string;
+  disclaimer: string;
+}
+

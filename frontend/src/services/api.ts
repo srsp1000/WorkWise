@@ -7,7 +7,8 @@ import type {
   CityItem
 } from '../types/api';
 
-const API_BASE = '/api';
+const rawBase = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '') ?? '/api';
+export const API_BASE = rawBase.endsWith('/api') ? rawBase : `${rawBase}/api`;
 
 export async function fetchTasksCatalog(): Promise<TasksCatalogResponse> {
   const res = await fetch(`${API_BASE}/tasks`);
@@ -77,4 +78,44 @@ export async function reverseGeocode(lat: number, lon: number): Promise<{ city: 
     city: address.city || address.town || address.village || address.state_district || 'Unknown City',
     state: address.state || 'Unknown State',
   };
+}
+
+export interface AudioSynthesisResult {
+  status: 'success' | 'fallback';
+  provider: string;
+  mode: string;
+  audio_base64: string | null;
+  s3_key?: string | null;
+  text: string;
+  language: string;
+  voice?: string;
+  notice?: string;
+}
+
+export async function synthesizeAudioBrief(
+  text: string,
+  language: 'hi-IN' | 'en-IN' = 'hi-IN',
+  voiceId?: string
+): Promise<AudioSynthesisResult> {
+  const res = await fetch(`${API_BASE}/audio/synthesize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, language, voice_id: voiceId }),
+  });
+  if (!res.ok) {
+    throw new Error(`Audio synthesis request failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function askSupervisorAI(payload: { question: string; plan: PlanResponse }) {
+  const res = await fetch(`${API_BASE}/ai/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    throw new Error(`AI assistant query failed: ${res.statusText}`);
+  }
+  return res.json();
 }

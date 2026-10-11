@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { PlanResponse } from '../types/api';
+import { synthesizeAudioBrief } from '../services/api';
 import {
   Volume2,
   VolumeX,
@@ -24,9 +25,12 @@ export const VoiceBrief: React.FC<VoiceBriefProps> = ({ plan, city }) => {
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
   const [playbackProgress, setPlaybackProgress] = useState<number>(0);
   const [shareSuccess, setShareSuccess] = useState(false);
+  const [audioProvider, setAudioProvider] = useState<'idle' | 'amazon_polly' | 'browser_fallback'>('idle');
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
 
   const progressIntervalRef = useRef<any>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
   const scheduled = plan.schedule.filter((s) => s.status === 'SCHEDULED');
   const unscheduled = plan.schedule.filter((s) => s.status === 'UNSCHEDULABLE');
@@ -88,9 +92,13 @@ export const VoiceBrief: React.FC<VoiceBriefProps> = ({ plan, city }) => {
 
   const briefText = generateBriefText(lang);
 
-  // Clean up speech synthesis on unmount
+  // Clean up speech synthesis & HTML5 audio on unmount
   useEffect(() => {
     return () => {
+      if (audioElementRef.current) {
+        audioElementRef.current.pause();
+        audioElementRef.current = null;
+      }
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
@@ -115,55 +123,129 @@ export const VoiceBrief: React.FC<VoiceBriefProps> = ({ plan, city }) => {
     }, 250);
   };
 
-  const handleToggleAudio = () => {
+  const playBrowserSpeech = () => {
     if (!('speechSynthesis' in window)) {
       alert('Browser does not support SpeechSynthesis.');
+      setIsPlaying(false);
+      setIsPaused(false);
       return;
     }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(briefText);
+    utterance.lang = lang === 'hi' ? 'hi-IN' : 'en-IN';
+    utterance.rate = playbackSpeed;
 
+    const wordsCount = briefText.split(/\s+/).length;
+    const estimatedSec = Math.max(5, (wordsCount / 2.5) / playbackSpeed);
+
+    utterance.onstart = () => {
+      setIsPlaying(true);
+      setIsPaused(false);
+      setAudioProvider('browser_fallback');
+      setPlaybackProgress(0);
+      startProgressTracking(estimatedSec);
+    };
+
+    utterance.onend = () => {
+      setIsPlaying(false);
+      setIsPaused(false);
+      setPlaybackProgress(100);
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+    };
+
+    utterance.onerror = () => {
+      setIsPlaying(false);
+      setIsPaused(false);
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+    };
+
+    utteranceRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleToggleAudio = async () => {
+    // If audio is currently playing, handle pause / resume
     if (isPlaying) {
-      if (isPaused) {
-        window.speechSynthesis.resume();
-        setIsPaused(false);
-      } else {
-        window.speechSynthesis.pause();
-        setIsPaused(true);
+      if (audioElementRef.current) {
+        if (isPaused) {
+          audioElementRef.current.play();
+          setIsPaused(false);
+        } else {
+          audioElementRef.current.pause();
+          setIsPaused(true);
+        }
+        return;
       }
-    } else {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(briefText);
-      utterance.lang = lang === 'hi' ? 'hi-IN' : 'en-IN';
-      utterance.rate = playbackSpeed;
+      if ('speechSynthesis' in window) {
+        if (isPaused) {
+          window.speechSynthesis.resume();
+          setIsPaused(false);
+        } else {
+          window.speechSynthesis.pause();
+          setIsPaused(true);
+        }
+        return;
+      }
+    }
 
-      const wordsCount = briefText.split(/\s+/).length;
-      const estimatedSec = Math.max(5, (wordsCount / 2.5) / playbackSpeed);
+    // Start playback: Try Amazon Polly neural first via /api/audio/synthesize
+    handleStopAudio();
+    setIsSynthesizing(true);
 
-      utterance.onstart = () => {
+    try {
+      const res = await synthesizeAudioBrief(
+        briefText,
+        lang === 'hi' ? 'hi-IN' : 'en-IN',
+        'Kajal'
+      );
+
+      if (res && res.status === 'success' && res.audio_base64) {
+        const audio = new Audio(`data:audio/mp3;base64,${res.audio_base64}`);
+        audio.playbackRate = playbackSpeed;
+        audioElementRef.current = audio;
+        setAudioProvider('amazon_polly');
+
+        audio.ontimeupdate = () => {
+          if (audio.duration && audio.duration > 0) {
+            const pct = Math.min(100, Math.round((audio.currentTime / audio.duration) * 100));
+            setPlaybackProgress(pct);
+          }
+        };
+
+        audio.onended = () => {
+          setIsPlaying(false);
+          setIsPaused(false);
+          setPlaybackProgress(100);
+          audioElementRef.current = null;
+        };
+
+        audio.onerror = () => {
+          audioElementRef.current = null;
+          playBrowserSpeech();
+        };
+
+        await audio.play();
         setIsPlaying(true);
         setIsPaused(false);
         setPlaybackProgress(0);
-        startProgressTracking(estimatedSec);
-      };
-
-      utterance.onend = () => {
-        setIsPlaying(false);
-        setIsPaused(false);
-        setPlaybackProgress(100);
-        if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-      };
-
-      utterance.onerror = () => {
-        setIsPlaying(false);
-        setIsPaused(false);
-        if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-      };
-
-      utteranceRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
+        return;
+      } else {
+        // Fallback to browser SpeechSynthesis
+        playBrowserSpeech();
+      }
+    } catch {
+      // Network or API failure fallback to browser SpeechSynthesis
+      playBrowserSpeech();
+    } finally {
+      setIsSynthesizing(false);
     }
   };
 
   const handleStopAudio = () => {
+    if (audioElementRef.current) {
+      audioElementRef.current.pause();
+      audioElementRef.current = null;
+    }
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -175,6 +257,9 @@ export const VoiceBrief: React.FC<VoiceBriefProps> = ({ plan, city }) => {
 
   const handleSpeedChange = (newSpeed: number) => {
     setPlaybackSpeed(newSpeed);
+    if (audioElementRef.current) {
+      audioElementRef.current.playbackRate = newSpeed;
+    }
     if (isPlaying) {
       handleStopAudio();
     }
@@ -241,7 +326,13 @@ export const VoiceBrief: React.FC<VoiceBriefProps> = ({ plan, city }) => {
             {lang === 'hi' ? 'दैनिक कार्य दिशा-निर्देश (Site Briefing)' : 'Daily Shift Directive'}
           </h3>
           <span className="badge-status GO" style={{ fontSize: '0.7rem' }}>
-            {lang === 'hi' ? 'हिंदी स्वर (hi-IN)' : 'English Voice (en-IN)'}
+            {audioProvider === 'amazon_polly'
+              ? `Amazon Polly Neural (Kajal - ${lang === 'hi' ? 'hi-IN' : 'en-IN'})`
+              : audioProvider === 'browser_fallback'
+              ? `Browser Web Speech API (${lang === 'hi' ? 'hi-IN' : 'en-IN'})`
+              : lang === 'hi'
+              ? 'हिंदी स्वर (Kajal Neural / Speech API)'
+              : 'English Voice (Kajal Neural / Speech API)'}
           </span>
         </div>
 
@@ -271,10 +362,15 @@ export const VoiceBrief: React.FC<VoiceBriefProps> = ({ plan, city }) => {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
           <button
             onClick={handleToggleAudio}
+            disabled={isSynthesizing}
             className="btn-primary"
-            style={{ padding: '0.65rem 1.25rem' }}
+            style={{ padding: '0.65rem 1.25rem', opacity: isSynthesizing ? 0.7 : 1 }}
           >
-            {isPlaying && !isPaused ? (
+            {isSynthesizing ? (
+              <>
+                <Volume2 size={16} /> Synthesizing Audio...
+              </>
+            ) : isPlaying && !isPaused ? (
               <>
                 <Pause size={16} /> Pause Audio
               </>

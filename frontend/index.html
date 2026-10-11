@@ -7,6 +7,7 @@
     <title>WorkWise — Plan Smarter. Work Safer.</title>
     <meta name="description" content="WorkWise: Climate-aware construction work planning and worker communication. Task-aware scheduling engine based on physical WBGT and NIOSH heat safety criteria." />
     <meta name="theme-color" content="#10b981" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="WorkWise" />
@@ -19,13 +20,38 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
-      if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch((err) => {
-            console.log('WorkWise SW registration notice:', err);
+      (function() {
+        if (!('serviceWorker' in navigator)) return;
+        var isLocal = Boolean(
+          window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1' ||
+          window.location.hostname === '[::1]' ||
+          window.location.port === '5180' ||
+          window.location.port === '5173'
+        );
+
+        if (isLocal) {
+          // In local development, unregister any active service worker to avoid breaking Vite HMR
+          navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            registrations.forEach(function(reg) {
+              reg.unregister();
+            });
           });
-        });
-      }
+          if ('caches' in window) {
+            caches.keys().then(function(keys) {
+              keys.forEach(function(key) {
+                if (key.startsWith('workwise-')) caches.delete(key);
+              });
+            });
+          }
+        } else if (window.location.protocol.startsWith('http')) {
+          window.addEventListener('load', function() {
+            navigator.serviceWorker.register('/sw.js').catch(function(err) {
+              console.log('WorkWise SW registration notice:', err);
+            });
+          });
+        }
+      })();
     </script>
   </body>
 </html>

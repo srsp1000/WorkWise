@@ -170,3 +170,21 @@ def test_workability_heatmap_and_recommendations_contract():
         assert "alternative" in act
 
 
+def test_live_plan_timezone_default_date():
+    from zoneinfo import ZoneInfo
+    from datetime import datetime
+    expected_date = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    payload = {
+        "lat": 28.6139,
+        "lon": 77.2090,
+        "shift_start_hour": 6,
+        "shift_end_hour": 18,
+        "tasks": [{"id": "material_prep", "duration_h": 2}],
+    }
+    response = client.post("/api/plan", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["date"] == expected_date
+
+
+

@@ -13,11 +13,21 @@ from __future__ import annotations
 from datetime import date, datetime
 import hashlib
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Path as APIPath
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .ai import (
+    AIAskResponse,
+    AIExplanationResponse,
+    AIRephraseResponse,
+    answer_supervisor_question,
+    explain_plan,
+    is_bedrock_configured,
+    rephrase_brief_for_workers,
+)
 from .cities import get_cities_list
 from .config import (
     CONFIG_VERSION,
@@ -312,7 +322,7 @@ def generate_live_plan(req: PlanRequest):
         if t.id not in TASKS:
             raise HTTPException(status_code=400, detail=f"Unknown task ID: '{t.id}'")
 
-    target_date = req.date_str or date.today().isoformat()
+    target_date = req.date_str or datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
     try:
         rows = fetch_hourly(req.lat, req.lon, target_date, target_date, use_fallback_on_failure=True)
     except Exception as e:
@@ -379,15 +389,18 @@ def generate_live_plan(req: PlanRequest):
         plan_id = _generate_plan_id(req.lat, req.lon, target_date)
         rest_recs = _build_rest_recommendations(matrix, req.new_crew)
 
+        is_fallback = any(r.get("is_sample_fallback") for r in rows) if rows else False
+
         metadata = PlanMetadataModel(
             plan_id=plan_id,
             generated_at=datetime.now().isoformat(),
             engine_version=CONFIG_VERSION,
-            data_source="Open-Meteo Forecast API",
-            is_simulated=False,
-            attribution=DATA_ATTRIBUTION,
-            data_freshness=f"Hourly forecast retrieved for {target_date}",
+            data_source="Offline Sample Fixture (Open-Meteo fallback)" if is_fallback else "Open-Meteo Forecast API",
+            is_simulated=is_fallback,
+            attribution="Offline Sample Weather Fixture" if is_fallback else DATA_ATTRIBUTION,
+            data_freshness="Offline sample fallback" if is_fallback else f"Hourly forecast retrieved for {target_date}",
         )
+
 
         input_assumptions = InputAssumptionsModel(
             site=f"Lat {req.lat:.4f}, Lon {req.lon:.4f}",
@@ -560,7 +573,7 @@ def generate_scenario_plan(
 class AudioSynthesisRequest(BaseModel):
     text: str = Field(..., max_length=1500)
     language: str = Field("hi-IN", description="'hi-IN' or 'en-IN'")
-    voice_id: Optional[str] = Field(None, description="Amazon Polly voice ID (e.g., 'Kajal', 'Aditi')")
+    voice_id: Optional[str] = Field(None, description="Amazon Polly voice ID (defaults to 'Kajal' for neural bilingual Hindi/English)")
 
 
 @app.post("/api/audio/synthesize", summary="Synthesize Spoken Brief Audio")
@@ -568,24 +581,27 @@ def synthesize_audio(req: AudioSynthesisRequest):
     """Audio synthesis endpoint supporting Amazon Polly with browser fallback."""
     import os
     aws_region = os.getenv("AWS_REGION", "ap-south-1")
-    has_aws = bool(os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"))
-
-    if not has_aws:
-        return {
-            "status": "fallback",
-            "provider": "browser_fallback",
-            "mode": "browser_fallback",
-            "audio_base64": None,
-            "text": req.text,
-            "language": req.language,
-            "notice": "Amazon Polly credentials not configured. Using client-side Web Speech API.",
-        }
 
     try:
         import boto3
         import base64
-        polly = boto3.client("polly", region_name=aws_region)
-        voice = req.voice_id or ("Kajal" if req.language == "hi-IN" else "Aditi")
+
+        # Validate that boto3 has credentials (environment or IAM execution role)
+        session = boto3.Session()
+        creds = session.get_credentials()
+        if creds is None:
+            return {
+                "status": "fallback",
+                "provider": "browser_fallback",
+                "mode": "browser_fallback",
+                "audio_base64": None,
+                "text": req.text,
+                "language": req.language,
+                "notice": "Amazon Polly credentials not configured. Using client-side Web Speech API.",
+            }
+
+        polly = session.client("polly", region_name=aws_region)
+        voice = req.voice_id or "Kajal"
         response = polly.synthesize_speech(
             Text=req.text,
             OutputFormat="mp3",
@@ -596,11 +612,30 @@ def synthesize_audio(req: AudioSynthesisRequest):
         if audio_stream:
             audio_bytes = audio_stream.read()
             b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+
+            # Persist to S3 bucket if configured in environment
+            s3_bucket = os.getenv("S3_STORAGE_BUCKET")
+            s3_key = None
+            if s3_bucket:
+                try:
+                    s3 = session.client("s3", region_name=aws_region)
+                    text_hash = hashlib.sha256(req.text.encode("utf-8")).hexdigest()[:16]
+                    s3_key = f"audio-briefs/{req.language}/{text_hash}.mp3"
+                    s3.put_object(
+                        Bucket=s3_bucket,
+                        Key=s3_key,
+                        Body=audio_bytes,
+                        ContentType="audio/mpeg",
+                    )
+                except Exception:
+                    pass
+
             return {
                 "status": "success",
                 "provider": "amazon_polly",
                 "mode": "polly_neural",
                 "audio_base64": b64_audio,
+                "s3_key": s3_key,
                 "text": req.text,
                 "language": req.language,
                 "voice": voice,
@@ -615,3 +650,84 @@ def synthesize_audio(req: AudioSynthesisRequest):
             "language": req.language,
             "notice": f"Polly service exception: {str(e)}. Using browser Web Speech API.",
         }
+
+
+# --- AI Assistance & Safeguards Endpoints (Phase 6) ---
+
+class AIExplainRequest(BaseModel):
+    plan: dict = Field(..., description="Full PlanResponse dictionary")
+    task_id: Optional[str] = Field(None, description="Optional task ID")
+    language: str = Field("both", description="'en', 'hi', or 'both'")
+    use_ai: bool = Field(True, description="Whether to query Bedrock if configured")
+
+
+class AIAskRequest(BaseModel):
+    question: str = Field(..., max_length=500, description="Supervisor question")
+    plan: dict = Field(..., description="Plan response context")
+    language: str = Field("en", description="'en' or 'hi'")
+    use_ai: bool = Field(True, description="Whether to query Bedrock if configured")
+
+
+class AIRephraseRequest(BaseModel):
+    text: str = Field(..., max_length=1500)
+    target_audience: str = Field("worker", description="'worker' or 'supervisor'")
+    language: str = Field("both")
+    use_ai: bool = Field(True)
+
+
+@app.get("/api/ai/status", summary="AI Assistant Service Status")
+def get_ai_status():
+    """Returns whether Amazon Bedrock is configured or running in deterministic template mode."""
+    import os
+    configured = is_bedrock_configured()
+    return {
+        "status": "ready",
+        "bedrock_configured": configured,
+        "mode": "amazon_bedrock" if configured else "deterministic_template",
+        "default_model": os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0"),
+        "region": os.getenv("AWS_REGION", "ap-south-1"),
+        "safeguards_active": True,
+    }
+
+
+@app.post("/api/ai/explain", response_model=AIExplanationResponse, summary="Explain Work Plan")
+def explain_plan_endpoint(req: AIExplainRequest):
+    """Generates a concise, safeguarded bilingual explanation for a plan or task."""
+    try:
+        return explain_plan(
+            plan_data=req.plan,
+            task_id=req.task_id,
+            language=req.language,
+            use_ai=req.use_ai,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate explanation: {str(e)}")
+
+
+@app.post("/api/ai/ask", response_model=AIAskResponse, summary="Supervisor Q&A Assistant")
+def ask_ai_endpoint(req: AIAskRequest):
+    """Answers supervisor questions strictly grounded in the deterministic plan."""
+    try:
+        return answer_supervisor_question(
+            question=req.question,
+            plan_data=req.plan,
+            language=req.language,
+            use_ai=req.use_ai,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to answer question: {str(e)}")
+
+
+@app.post("/api/ai/rephrase", response_model=AIRephraseResponse, summary="Rephrase Technical Brief")
+def rephrase_ai_endpoint(req: AIRephraseRequest):
+    """Rephrases technical safety parameters into plain worker briefing language."""
+    try:
+        return rephrase_brief_for_workers(
+            text=req.text,
+            target_audience=req.target_audience,
+            language=req.language,
+            use_ai=req.use_ai,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to rephrase brief: {str(e)}")
+

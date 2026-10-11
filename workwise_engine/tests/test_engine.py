@@ -8,7 +8,7 @@ Validates:
 - Acclimatization threshold offsets (OSHA / NIOSH baseline criteria including Very heavy).
 - Configurable task intensity (workload not bound to task name).
 - Independent physical constraint gates (rain wash, thunderstorm lightning, configurable equipment wind).
-- CAQM GRAP pollution regulatory stages (revised schedule dated 29 September 2026).
+- CAQM GRAP pollution regulatory stages (revised schedule dated 28 September 2026).
 - Prerequisite completion states (completed_prior allowing immediate scheduling).
 - Continuous vs non-continuous task execution flexibility.
 - Workability heatmap across 4 tiers (heavy, moderate, light, shaded).

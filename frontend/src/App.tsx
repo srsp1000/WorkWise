@@ -188,6 +188,7 @@ export function App() {
       setIsLoading(true);
       setError(null);
       let res: PlanResponse;
+      const todayDate = new Date().toLocaleDateString('en-CA');
       if (selectedScenarioId && selectedScenarioId !== 'live') {
         res = await generateScenarioPlan(selectedScenarioId, {
           lat: location.lat,
@@ -204,6 +205,7 @@ export function App() {
         res = await generateLivePlan({
           lat: location.lat,
           lon: location.lon,
+          date_str: todayDate,
           new_crew: newCrew,
           grap_stage: grapStage,
           shift_start_hour: shiftStart,
@@ -233,6 +235,21 @@ export function App() {
 
       let updatedTasks = [...selectedTasks];
 
+      if (payload.action_type === 'early_concrete' || _actionId === 'early-concrete') {
+        const rebarId = payload.task_id || 'rebar';
+        let found = false;
+        updatedTasks = updatedTasks.map((t) => {
+          if (t.id === rebarId) {
+            found = true;
+            return { ...t, completed_prior: true };
+          }
+          return t;
+        });
+        if (!found) {
+          updatedTasks.push({ id: rebarId, duration_h: 4, crew_required: 0, completed_prior: true });
+        }
+      }
+
       if (payload.set_completed_prior) {
         const targetId = payload.task_id || payload.target_task_id;
         let found = false;
@@ -259,9 +276,11 @@ export function App() {
 
       setSelectedTasks(updatedTasks);
 
+      const todayDate = new Date().toLocaleDateString('en-CA');
       const requestPayload = {
         lat: location.lat,
         lon: location.lon,
+        date_str: todayDate,
         new_crew: newCrew,
         grap_stage: grapStage,
         shift_start_hour: shiftStart,

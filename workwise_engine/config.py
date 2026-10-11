@@ -12,7 +12,7 @@ References:
 3. ISO 7243:2017 Ergonomics of the thermal environment — Assessment of heat stress
    using the WBGT (wet bulb globe temperature) index.
 4. CAQM (Commission for Air Quality Management in NCR and Adjoining Areas):
-   - Graded Response Action Plan (GRAP) for Delhi NCR (Revised Schedule dated 29 September 2026).
+   - Graded Response Action Plan (GRAP) for Delhi NCR (Revised Schedule dated 28 September 2026).
 5. IMD (India Meteorological Department):
    - Heatwave meteorological criteria (used for contextual weather awareness, NOT direct occupational safety limits).
 
@@ -200,7 +200,7 @@ WORKABILITY_TIERS = [
     },
 ]
 
-# CAQM Graded Response Action Plan (GRAP) for Delhi NCR (Revised Schedule: 29 September 2026).
+# CAQM Graded Response Action Plan (GRAP) for Delhi NCR (Revised Schedule: 28 September 2026).
 GRAP_STAGES: dict[int, str] = {
     0: "Normal (No Restrictions)",
     1: "Stage I — Poor (Dust Control Enforced)",
@@ -244,5 +244,20 @@ DEFAULT_RAIN_MM_BLOCK: float = 0.5     # Precipitation rate mm/h threshold for r
 DEFAULT_GUST_WARN_KMH: float = 35.0    # Wind gust speed km/h threshold for cranes / height work
 LIGHTNING_CODES: set[int] = {95, 96, 97, 98, 99}  # WMO weather codes for thunderstorms
 
+# Bedrock & AI Assistant Configuration
+BEDROCK_DEFAULT_REGION: str = "ap-south-1"
+BEDROCK_DEFAULT_MODEL_ID: str = "apac.amazon.nova-lite-v1:0"
+BEDROCK_FALLBACK_MODEL_ID: str = "amazon.titan-text-express-v1"
+BEDROCK_TIMEOUT_SECONDS: float = 8.0
+AI_DISCLAIMER_EN: str = (
+    "AI is an explanatory communication layer. WorkWise's deterministic safety engine "
+    "is the authoritative source of truth. Does not constitute medical advice or a guarantee of safety."
+)
+AI_DISCLAIMER_HI: str = (
+    "एआई केवल एक व्याख्यात्मक संचार साधन है। वर्कवाइज का सुरक्षा इंजन ही अंतिम निर्णयकर्ता है। "
+    "यह चिकित्सा सलाह या पूर्ण सुरक्षा की कानूनी गारंटी नहीं है।"
+)
+
 CONFIG_VERSION: str = "2026.2-field-ops"
 LAST_REVIEWED_DATE: str = "2026-10-11"
+

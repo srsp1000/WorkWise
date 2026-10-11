@@ -1,0 +1,15 @@
+# Files and directories to exclude from the AWS Lambda package during sam build
+frontend/
+docs/
+.git/
+.gitignore
+.pytest_cache/
+__pycache__/
+*.md
+workwise_engine/tests/
+data/historical_may2024_archive.json
+scripts/historical_wbgt_audit.py
+scripts/test_lambda_local.py
+demo.py
+demo_offline.py
+phase1_output.json
