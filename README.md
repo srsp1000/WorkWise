@@ -1,4 +1,4 @@
-# WorkWise (कामवाइज़)
+# WorkWise
 
 > **Plan smarter. Work safer.**  
 > Climate-aware construction task scheduling and workforce communication platform for India.
